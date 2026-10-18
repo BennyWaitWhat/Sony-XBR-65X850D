@@ -304,8 +304,19 @@ Attempting to load a kernel module from the zygote child (which we can do as roo
    **`modules_disabled` is 1**. That variable is one-way: once set, the kernel refuses module
    loading permanently, including for a privileged caller.
 
-So the module route is dead on this device. The zygote domain's `CAP_SYS_MODULE` was real, but
-Sony/MTK disabled module loading in the shipped kernel.
+**Correction (measured):** the `EPERM` is **SELinux**, not `modules_disabled`. The audit log shows
+it explicitly:
+
+```
+avc: denied { sys_module } for capability=16
+    scontext=u:r:zygote:s0 tcontext=u:r:zygote:s0 tclass=capability permissive=0
+```
+
+So `capable(CAP_SYS_MODULE)` returns false because the SELinux `capability` class denies
+`sys_module` to the zygote domain, even though the capability itself is in the process's
+effective set (which is why `capget()` says present). Module loading is therefore blocked by
+policy, not by a one-way kernel switch — but we cannot change the kernel's policy either, so
+the route is still closed to us.
 
 ### What this leaves
 
