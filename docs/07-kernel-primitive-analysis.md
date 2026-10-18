@@ -219,3 +219,65 @@ kernel-level reach. The concrete next step is now well-defined:
 
 Step 2 is the dangerous one: an OOB read of an unmapped heap address is an oops, and
 `panic_on_oops=1` turns that into a reboot. It needs its own carefully bounded probe.
+
+---
+
+## 9. Status after the first fires — GPU write engine confirmed, and a route correction
+
+### 9.1 The GPU can be made to write zeros through its MMU (verified)
+
+Safe test: a Midgard `WRITE_VALUE(ZERO)` job aimed at a GPU VA mapping **our own** page,
+filled with `0xAA` beforehand:
+
+```
+[+] target filled: first word = 0xaaaaaaaa
+[+] submitted WRITE_VALUE(ZERO) -> gpu_va 0x102002000
+[+] target first word now = 0x00000000  second = 0x00000000
+[+] job exception_status (w0) = 0x1
+[+] GPU WRITE ENGINE CONFIRMED (zeros written through the MMU)
+```
+
+Job header packing that works on r1p0: 32-byte header with
+`w4 = is_64b | type<<1 | barrier<<8 | invalidate_cache<<9 | index<<16`,
+`MALI_JOB_TYPE_WRITE_VALUE = 2`, payload `{ u64 address; u32 type; u32 pad; u64 immediate; }`,
+`MALI_WRITE_VALUE_TYPE_ZERO = 3`, atom `core_req = 0x10` (`BASE_JD_REQ_V`).
+Program: [`../exploit/cve-2022-20186/gpu_write_test.c`](../exploit/cve-2022-20186/gpu_write_test.c).
+
+**This is the piece that matters:** for the endgame we do not need to write a *value* — we
+need to write **zero** into `selinux_enforcing`, and zero is exactly what this GPU can write.
+
+### 9.2 Correction to §8 step 4
+
+§8 claimed that after redirecting a region's PTEs, the region's **userspace** mapping would
+follow. **That is wrong.** kbase creates the CPU mapping of a region by remapping
+`alloc->pages` directly (`remap_pfn_range`-style); it never consults the GPU page tables. PTE
+manipulation therefore gives **GPU-side visibility only**.
+
+The corrected route, now that §9.1 exists:
+
+1. Control **PTE values** — source them from a groomed kernel-heap window using the separate
+   `ai[i].offset + ai[i].length` u64 add-overflow (`mem_linux.c:1298`). The aliased array
+   entries are 32-bit page addresses, so a heap window we control becomes the PTE values.
+2. Aim the resulting mapping at the physical page holding `selinux_enforcing`
+   (`phys = virt - 0xc0000000` for direct-mapped kernel addresses on this 3-armv7 device).
+3. `WRITE_VALUE(ZERO)` at that GPU VA → `selinux_enforcing = 0` → **permissive**.
+
+Good news on the risk: the OOB read in step 1 stays inside the kernel **direct map** for small
+offsets, and the direct map covers all RAM — so the read itself should not fault. The residual
+danger is only that uncontrolled PTE values make the GPU touch unwanted pages, which is why
+step 1 must pair the read with a groomed window rather than a random offset.
+
+### 9.3 The remaining gate: we need data-symbol addresses
+
+We have 14 symbol-resolved **text** addresses from the boot log (§4), but
+`selinux_enforcing` is a **data** symbol and `/proc/kallsyms` is zeroed. Measured from the app
+domain (even as uid 0): `selinuxfs` write, `kptr_restrict` write, `/proc/kallsyms`,
+`/proc/kcore` and `/proc/cmdline` are **all denied** — the LSM domain, not the uid, is the
+gate.
+
+Therefore the next probe runs in the one domain we have code execution in that also holds
+capabilities: `u:r:zygote:s0`. A combined payload (our app keeps uid 0; a system-app spawn
+instead forks an `app_process` probe as root in the zygote domain) plus the Java probe that
+dumps `CapEff` and greps `kallsyms` for `selinux_enforcing` is **prepared and compile-checked**
+in [`../exploit/zygote-root-probe/`](../exploit/zygote-root-probe/). It has not been applied to
+the device yet, because installing it briefly reconfigures the live root console.
