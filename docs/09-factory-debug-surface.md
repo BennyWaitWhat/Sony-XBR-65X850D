@@ -219,3 +219,36 @@ Re-run with a **marker-only** stub (no `enforce` write) writing somewhere a root
     re-checking for that process,
   * no marker, no reboot -> the stub is not reached from dumpstate's sh path and the trigger
     needs to change.
+
+---
+
+## Round 9: the sh patch is real but evictable; the round-8 reset was the platform's recovery
+
+Marker-only stub (no SELinux write) applied cleanly:
+stage 1 `file_ok=1` (stub in the cave, read-back verified), stage 2 `file_ok=1`
+(`e_entry = 0x2c900`), `SELF-TEST OK`, `sh -c 'echo SH_OK'` fine.
+
+Then `adb bugreport` (a *complete* 1.4 MB report this time, so `dumpstatez` really ran as
+root and ran `/system/bin/sh`). Result:
+
+```
+uptime 4 min          -> NO reboot this time
+e_entry = 0x2680      -> our patched page was EVICTED, sh loaded from disk unpatched
+getenforce = Enforcing -> nothing changed
+/data/anr/pwnroot     -> absent
+```
+
+So the bugreport's memory pressure evicted the dirty page we had patched into the page
+cache, and `sh` came back from the read-only image. Our page-cache injection is only as
+durable as the page cache itself.
+
+That also settles round 8: there the TV **rebooted**, so the stub must have run **as root**
+and the `enforce` write is what caused it. And the reset was not a panic: the bugreport's
+`/cache/recovery/last_kmsg` and `last_log` show the TV booted into **recovery and wiped
+/cache** ("Data wipe complete"), with no panic, no oops, no SysRq. That is a deliberate
+platform response, not a crash.
+
+Conclusion for the design: `setenforce 0` is the wrong root action on this box - it trips the
+platform's recovery path. The payload should instead do something that survives without
+touching SELinux, e.g. start a root listener in the privileged domain it already runs in
+(dumpstate/system), then have the persistent boot job re-apply the sh patch on every boot.
