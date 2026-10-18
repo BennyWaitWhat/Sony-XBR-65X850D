@@ -103,3 +103,37 @@ Page-cache patches are also **evictable under memory pressure**: during this ses
 `libdumpstateutil.so` patches reverted on their own between runs, which is why the root payload
 must be re-applied before a trigger if a lot has happened since. The manual helpers
 (`/data/local/tmp/pB`, pP/pUid, pDSA/pDSB/pDST) remain the reliable way to re-apply on demand.
+
+---
+
+## Live confirmation (re-verified end to end)
+
+After the page-cache patches were re-applied (`pDST` then `pDSA` on the device), one `adb bugreport`
+produced:
+
+```
+=== ROOT CHANNEL LIVE Sun Oct 18 17:11:16 EDT 2026 ===
+uid=0(root) gid=0(root) groups=0(root) context=u:r:dumpstate:s0
+context: u:r:dumpstate:s0
+enforce: Enforcing
+host: BRAVIA 4K 2015 Sony/SVP4KDTV15_UC/SVP-DTV15:8.0.0/OPR2...
+uptime:  17:11:16 up  2:02,  0 users
+```
+
+That is a repeatable root command channel on the TV, triggered from a plain adb shell.
+
+### Operational note: keep the ARM and Thumb stubs apart
+
+The first helper built for `libdumpstateutil.so` (`pDSB`) contains the **ARM** stub
+(`ff 00 2d e9 ...`) and the correct one (`pDST`) contains the **Thumb** stub (`ff b4 02 27 ...`).
+Writing the ARM stub makes dumpstate die with SIGILL and the bugreport trigger then fails with
+"Failed to connect to dumpstatez service" - which looks like an unrelated trigger problem but is
+actually the wrong-instruction-set stub. Always verify the first 8 bytes at `0x6200` are
+`ff b4 02 27 00 df 00 28` after patching.
+
+### Current gap
+
+SELinux. Root in `dumpstate` cannot write `/3rd_rw`, cannot `setenforce 0`, cannot load policy,
+cannot touch block devices. The only remaining route is CVE-2023-4211 phase A -> B -> C
+(tv-research/cve2023-4211). Phase A ran cleanly but produced no rss-counter BUG, so the trigger
+precondition needs debugging (task-8).
