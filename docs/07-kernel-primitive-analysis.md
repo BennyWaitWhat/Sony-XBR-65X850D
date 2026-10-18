@@ -1,132 +1,170 @@
 # 07 · CVE-2022-20186 — kernel primitive analysis
 
-Status: **analysis + harness only. Not weaponised, not fired at the device.**
-Firing this bug can panic the kernel (and therefore reboot the TV), so it is deliberately
-staged behind a dry-run harness.
+Status: **analysis, measurement and harness work. Nothing corrupting has been fired at the
+device.** The TV is in use, so everything below is either offline analysis, read-only recon,
+or *legitimate* API use with parameters that cannot overflow.
 
-## What the shipped driver does wrong
+## 1. The bug, precisely
 
-`KBASE_IOCTL_MEM_ALIAS` (ioctl `_IOWR(0x80, 21, …)`, 32-byte struct) takes a *stride*
-and a *nents* and allocates a VA region covering `stride * nents` pages.
-
-### The fixed version (r26p0 source, for comparison)
-
-`r26_mali_kbase_core_linux.c:813` pre-validates the inputs before any arithmetic happens:
+`KBASE_IOCTL_MEM_ALIAS` (`_IOWR(0x80, 21, …)`, 32-byte struct) creates a VA region that
+aliases other allocations at a fixed stride. Size accounting:
 
 ```c
-if (alias->in.nents == 0 || alias->in.nents > 2048)   return -EINVAL;
-if (alias->in.stride > (U64_MAX / 2048))              return -EINVAL;   /* ← the fix */
-ai = vmalloc(sizeof(*ai) * alias->in.nents);
-copy_from_user(ai, u64_to_user_ptr(alias->in.aliasing_info),
-               sizeof(*ai) * alias->in.nents);
+/* r26_mali_kbase_mem_linux.c:1203 — same expression in the shipped r20p0 */
+if ((nents * stride) > (U64_MAX / PAGE_SIZE))
+        goto bad_size;                       /* u64 multiply — wraps */
+
+*num_pages = nents * stride;                  /* e.g. 2 instead of ~2^63 */
 ```
 
-With `nents ≤ 2048` **and** `stride ≤ U64_MAX/2048`, the later product cannot overflow.
-
-### The vulnerable version (r20p0, as shipped here)
-
-The bound on `stride` is what we observed to be **missing** on this device. Confirmed
-empirically (earlier in this project, and the reason this CVE was selected):
-
-```
-stride = 0x8000000000000001, nents = 2
-   correct  : 0x8000000000000001 * 2 = 0x1_0000000000000002
-   observed : va_pages = 2                       ← the u64 product wrapped
-```
-
-That matches `r26_mali_kbase_mem_linux.c:1203` **without** the stride guard:
+The upstream fix (present in r26p0, **absent** on this device) is an input pre-check in the
+ioctl handler:
 
 ```c
-if ((nents * stride) > (U64_MAX / PAGE_SIZE))   /* wraps — useless check */
-        goto bad_size;
-
-*num_pages = nents * stride;                    /* 2  (should be ~2^63) */
+/* r26_mali_kbase_core_linux.c:820 */
+if (alias->in.nents == 0 || alias->in.nents > 2048)  return -EINVAL;
+if (alias->in.stride > (U64_MAX / 2048))             return -EINVAL;   /* ← missing */
 ```
 
-So `num_pages` — the value used to size the VA region — becomes 2 while the alias array
-describes a gigantic span.
+Confirmed on the device earlier in this project: `stride = 0x8000000000000001, nents = 2`
+yields `va_pages = 2`.
 
-## Where the wrapped value is consumed (and where it is not)
+## 2. Where the wrapped value hurts — and a correction
 
-Following `kbase_mem_alias()` → `kbase_gpu_mmap()` (`r26_mali_kbase_mem.c:1023`):
+My first reading of this bug was that the oversized `stride` alone pushes the PTE insertion
+out of bounds. **That is wrong**, and it is worth writing down because the arithmetic is
+subtle:
+
+`kbase_gpu_mmap()` inserts at `reg->start_pfn + i*stride`, and the page-table walk reduces
+each index with `& 0x1FF` (`mmu_get_next_pgd`, `r26_mali_kbase_mmu.c:929`) — three 9-bit
+levels + 12-bit offset, i.e. a **39-bit** GPU VA, mask `0x7FFFFFF` pages. For the wrap to
+keep `num_pages` small we need `stride ≡ k (mod 2^27)` with `num_pages = nents·k`, so every
+*start* vpfn `i·stride mod 2^27 = i·k < nents·k = num_pages` — **inside** the region.
+Feeding a huge stride alone does not produce stray PTEs.
+
+The real lever is the **run length**, which is not bounded by the region at all:
 
 ```c
-err = kbase_add_va_region(kctx, reg, addr, nr_pages /* 2 */, align);   /* tracker: 2 pages */
-
-if (reg->gpu_alloc->type == KBASE_MEM_TYPE_ALIAS) {
-    for (i = 0; i < alloc->imported.alias.nents; i++) {
+/* r26_mali_kbase_mem.c:1049 — kbase_gpu_mmap, alias branch */
+for (i = 0; i < alias.nents; i++)
         kbase_mmu_insert_pages(kctx->kbdev, &kctx->mmu,
-            reg->start_pfn + (i * stride),                 /* ← spurious vpfn */
-            aliased[i].alloc->pages + aliased[i].offset,
-            aliased[i].length, reg->flags & gwt_mask, kctx->as_nr);
+                reg->start_pfn + (i * stride),        /* masked to 39 bits */
+                aliased[i].alloc->pages + aliased[i].offset,
+                aliased[i].length,                    /* ← up to the SOURCE alloc size */
+                reg->flags & gwt_mask, kctx->as_nr);
 ```
 
-Two independent consequences:
+`aliased[i].length` is validated only against the *source allocation*
+(`ai[i].offset + ai[i].length > alloc->nents → bad_handle`), never against the new region's
+`num_pages`. So:
 
-1. **PTEs are inserted outside any tracked region.** `i * stride` is enormous; `kbase_mmu_insert_pages()` has *no* range check, and the page-table walk masks each level with `& 0x1FF`
-   (`mmu_get_next_pgd`, `r26_mali_kbase_mmu.c:929`), i.e. three 9-bit levels + 12-bit page
-   offset = **39-bit GPU VA = 2^27 pages**. A huge `vpfn` therefore does not go out of
-   bounds in the walk — it **wraps to an attacker-chosen 39-bit address** and writes real
-   PTEs there.
+* region: **2 pages** of tracked VA,
+* insertion: up to `length` = the whole source allocation (we can make it thousands of pages),
+* start: `start_pfn + i·stride`, reduced mod 2^27.
 
-2. **VA accounting is now a lie.** The region tracker owns 2 pages; the MMU owns entries
-   far outside it. Nothing will tear those entries down: `kbase_gpu_munmap()` only unmaps
-   `nr_pages` starting at the region base, so the spurious PTEs **leak permanently** while
-   the GPU address space believes those ranges are free.
+⇒ a **long run of PTEs is installed outside the tracked region**, mapping our own pages, and
+`kbase_gpu_munmap()` only removes `nr_pages` from the region base, so the stray entries are
+**never torn down**. That is the primitive.
 
-## Candidate primitives (ranked by how much I trust them)
+## 3. Measured on the device (safe: valid parameters only)
+
+```
+=== GPU VA allocator layout (custom zone) ===
+  alloc #0 : 4 pages -> gpu_va=0x0102000000  pfn=0x102000
+  alloc #1 : 4 pages -> gpu_va=0x0102004000  pfn=0x102004
+  alloc #2 : 4 pages -> gpu_va=0x0102008000  pfn=0x102008
+  alloc #3 : 4 pages -> gpu_va=0x010200c000  pfn=0x10200c
+  alloc #4 : 4 pages -> gpu_va=0x0102010000  pfn=0x102010
+  delta between consecutive allocations: 0x4000 bytes (0x4 pages)
+
+=== legitimate MEM_ALIAS (stride=2 pages, nents=2, length=1 page each) ===
+  MEM_ALIAS ok: gpu_va=0x0102014000 va_pages=4 (expected 2*2=4)
+
+=== valid alias with larger lengths (stride=8 pages, nents=2, length=4) ===
+  ok: gpu_va=0x0102018000 va_pages=16 (expect 16)
+```
+
+| Fact | Value | Why it matters |
+|---|---|---|
+| GPU VA zone base | pfn **0x102000** (`gpu_va=0x0102000000`) | target vpfns are computable exactly |
+| Allocator | strictly sequential, deterministic | we can predict where a region will land |
+| GPU VA space | 39-bit → 2^27 pages, index mask `0x7FFFFFF` | wrap targets are computable |
+| `stride` unit | **pages** (compared directly with `length`) | the struct comment saying "bytes" is stale |
+| required alias flags | **0xC** = `GPU_RD(1<<2) \| GPU_WR(1<<3)`; `0x3` fails with `ENOMEM` | any validation failure surfaces as `ENOMEM` (the handler returns 0) |
+| valid alias verified | 4-page and 16-page aliases, sequential VA | baseline; the API works from our context |
+| `sizeof(base_mem_aliasing_info)` | 24 B (handle u64, offset u64, length u64) | sizing for the alias array |
+| `sizeof(struct kbase_aliased)` | 24 B (ptr + pad + 2×u64) | sizing for the kernel-side array |
+| `panic_on_oops` | **1** (`/init.rc:112`) | any oops = panic = reboot. No room for stray dereferences |
+
+## 4. Kernel info-leak inventory (free, from `adb shell`)
+
+`/proc/kallsyms` is readable but zeroed (`kptr_restrict`). It does not matter — the **kernel
+log buffer leaks resolved symbol addresses** at every boot, because a `WARN` fires during
+`snd_mtk` module init and dumps a full backtrace:
+
+```
+WARNING: at .../lib/kobject.c:196 kobject_add_internal+0x164/0x1c8()
+[<c0015080>] (unwind_backtrace+0x0/0xe8)   from [<c0012b30>] (show_stack+0x20/0x24)
+[<c0012b30>] (show_stack+0x20/0x24)        from [<c05ab63c>] (dump_stack+0x20/0x28)
+[<c05ab63c>] (dump_stack+0x20/0x28)        from [<c00274ac>] (warn_slowpath_common+0x5c/0x7c)
+[<c002750c>] (warn_slowpath_fmt+0x40/0x48) from [<c0270604>] (kobject_add_internal+0x164/0x1c8)
+[<c02bd148>] (device_add+0xf4/0x564)       from [<c02c1404>] (platform_device_add+0x138/0x1cc)
+[<c02c18f4>] (platform_device_register_full+0xa8/0xe4) from [<bfd060cc>] (init_module+0xcc/0x20c [snd_mtk])
+[<c007fe24>] (load_module+0xe90/0x19f4)    from [<c0080aec>] (SyS_finit_module+0x6c/0x7c)
+[<c000e740>] (ret_fast_syscall+0x0/0x30)
+```
+
+Because each frame carries `symbol+offset/size`, the **exact address of every symbol in the
+trace is recoverable** (`dump_stack` = `0xc05ab63c - 0x20`, `kobject_add_internal` =
+`0xc0270604 - 0x164`, …). Additional leaks in the same buffer:
+
+| Leak | Example | Source |
+|---|---|---|
+| kernel text (14 symbols, resolved) | `[<c0270604>] kobject_add_internal+0x164` | boot `WARN` backtrace |
+| module base | `[<bfd060cc>] init_module+0xcc [snd_mtk]` → base `0xbfd06000` | same trace; modules: `snd_mtk`, `mt7662u_sta`, `fusion`, `texfat`, `tntfs`, `mtk_dummy`, `mtk_mod` |
+| kernel heap pointer | `pUrb=0xc98e2600` (13×, kmalloc'd `struct urb`) | `MUC_urb_enqueue` prints `%p` |
+| `/proc/slabinfo` | real SLUB object sizes/counts | readable from shell |
+
+Lowest text address observed is `0xc00086d8` (`do_one_initcall`), consistent with
+`_text = 0xc0008000` and **no KASLR relocation** — cheap to confirm at the next reboot by
+comparing the same addresses.
+
+## 5. Primitive ranking (revised)
 
 | # | Primitive | Mechanism | Risk |
 |---|---|---|---|
-| **A** | **GPU VA aliasing of attacker pages** — map our own physical pages at any 39-bit GPU VA, outside any region, permanently | consequence 1 above; `length` is bounded by the source allocation's `nents`, so the insert is small and controlled | medium — needs a follow-up impact (two regions sharing a VA, or a page-table page reachable as a GPU VA) |
-| **B** | **Region/MMU desynchronisation** — allocate a second region that the tracker hands out over an already-mapped VA, then set/clear entries on top of foreign PTEs | consequence 2 above | medium — this is the classic route to "GPU VA of a page table", i.e. CPU-editable PTEs |
-| **C** | **OOB kernel read into PTEs** — `ai[i].offset + ai[i].length` is a *separate* u64 add that wraps (`mem_linux.c:1298`), so `offset` can be huge and `alloc->pages + offset` walks off the source allocation; those words are installed as PTEs | `kbase_mmu_insert_pages` loop | high — uncontrolled heap reads; most likely to panic or hang |
-| **D** | **`nents`-driven heap overflow** — if r20p0 also lacks the `nents ≤ 2048` bound, `vmalloc(sizeof(*ai) * nents)` and `vzalloc(sizeof(*aliased) * nents)` both wrap, and the subsequent loop writes far past the allocation | — | very high — the write loop runs `nents` times, so this is a crash generator, not a controllable primitive |
+| **A** | **Long PTE run outside any tracked region** — map thousands of our pages over a chosen 39-bit VA window, permanently (never torn down) | §2, driven by `aliased[i].length` | **medium** — mechanism measured and understood; GPU-side only |
+| **B** | **Region/MMU desync → PTE redirection over an existing region's VA** | A, aimed at a VA the tracker will later hand to another region | medium |
+| **C** | **PTEs pointing at arbitrary physical pages** via the separate `ai[i].offset + ai[i].length` add-overflow (`mem_linux.c:1298`), which makes `alloc->pages + offset` walk off the array | an OOB *kernel heap read* supplies the PTE values | **high** — a bad read is an oops, and `panic_on_oops=1` |
+| **D** | `nents`-driven `vzalloc(sizeof(*aliased) * nents)` overflow | heap overflow with an `nents`-iteration loop | very high — crash generator |
 
-**Order of work:** A then B. C and D are last-resort and must only be attempted with the TV
-idle, because a single bad `nents` turns the device into a reboot.
+Order of work: **A → B → C**; C only once A/B have established a survivable pattern.
 
-## Environment facts gathered from the device (read-only)
+### A useful asymmetry
 
-| Fact | Value | Consequence for a kernel exploit |
-|---|---|---|
-| Symbol exposure | `/proc/kallsyms` readable **but all addresses are `00000000`** (83 103 lines) | no free symbol leak |
-| `kptr_restrict` | unreadable from shell and from our uid-0 app (SELinux) | can't confirm the exact value; behaviour matches `1`/`2` |
-| `/proc/cmdline` | denied | KASLR state unknown |
-| `/proc/config.gz` | absent | no `CONFIG_*` confirmation |
-| Allocator | `/proc/slabinfo` **readable from shell** (SLUB-style: objsize / objperslab / pagesperslab) | useful for grooming and for post-exploit verification |
-| Memory | 1 558 368 kB total, ~124 000 kB free | modest heap; SLUB partial slabs are predictable |
-| **Our capabilities** | `CapInh/Prm/Eff/Bnd = 0` — **empty bounding set** | uid 0 without caps: no `CAP_SYSLOG`, no shortcuts. The LPE must be done entirely from the kernel bug itself |
-| Architecture | armv7, 32-bit userspace, 3.10.79 | 32-bit kernel heap; `kbase` VA is 39-bit |
+GPU-side faults are **handled** by kbase and merely logged (this project's page-cache work
+produced `PERMISSION_FAULT`, `READ`, `WRITE` events in the kernel log with the TV alive).
+Kernel-side dereferences are fatal because of `panic_on_oops=1`. So a primitive that puts bad
+values **into PTEs** (GPU-visible, recoverable) is far safer than one that makes the kernel
+dereference a bad pointer (fatal) — and the exploit should be shaped accordingly.
 
-The empty capability bounding set is worth emphasising: it is dropped by
-`prctl(PR_CAPBSET_DROP)` during zygote's privilege drop, *not* by `setresuid`. Patching
-`setresuid` (which is what gives the root console) therefore yields `uid 0` with no
-capabilities at all — which is exactly why the framework is open but `/proc/kallsyms`,
-`dmesg` and raw devices are not.
+## 6. Staged test plan (needs an idle TV for steps 2+)
 
-## Staged test plan (designed around "do not reboot the TV")
+1. **Dry run / baseline** — done: [`alias_dryrun.c`](../exploit/cve-2022-20186/alias_dryrun.c)
+   computes the wrap without firing; the §3 measurements come from a safe probe.
+2. **Single controlled probe:** one `MEM_ALIAS` with `nents=2`, `num_pages` wrapped to 2, and
+   `length` = the whole source allocation (e.g. 256 pages). Expected: a 256-page PTE run at
+   `(0x102000 + i·stride) & 0x7FFFFFF` while the region still reports 2 pages. Watch the
+   kernel log for MALI faults; a reboot is the fallback and the boot job restores root by
+   itself.
+3. **Verify the stray mapping resolves** — GPU-side sentinel written through the aliased VA,
+   read back through the CPU mapping of the source pages.
+4. **Primitive B** — force the tracker to hand out an overlapping region; observe redirection.
+5. Only then: aim at `selinux_enforcing` / credentials, using §4 addresses.
 
-1. **Dry run (safe, done here):** compute what the wrap produces for chosen
-   `(stride, nents)` without issuing the ioctl — see
-   [`alias_dryrun.c`](../exploit/cve-2022-20186/alias_dryrun.c).
-2. **Single non-corrupting probe:** one `MEM_ALIAS` with `nents = 2`, a stride that wraps to
-   a small `num_pages`, and alias sources whose `length` is 1 page. This creates at most a
-   couple of stray PTEs at a chosen VA. Verify from userspace that the surrounding system
-   is unaffected; reboot is the fallback.
-3. **Primitive A measurement:** confirm the stray mapping actually resolves — e.g. point it
-   at a known native allocation and read the GPU address from a second context/job, or use
-   the GPU to write a sentinel through the aliased VA and observe the page contents through
-   the existing CPU mapping.
-4. **Primitive B construction:** force the region tracker to hand out an overlapping region
-   and observe whether PTEs can be made to point at a page-table page.
-5. Only after 3–4 work: aim at credentials / `selinux_state`.
+## 7. Why this is still the right path
 
-Steps 2–5 all carry panic risk and must be run when nobody is watching the TV.
-
-## Why this is worth doing anyway
-
-Everything above is the only route off the SELinux island. The app-domain root console is
-already useful, but the kernel is where `selinux_enforcing = 0` lives — and that single
-variable turns the current "framework root" into real root: remount `/system`, read
-`/data/system`, load modules, add a durable init service.
+`selinux_enforcing` is a data symbol. With the leak in §4 we do not need to scan for it — its
+address is derivable from a text-relative offset (kernel image, or a known build) or from a
+short pattern scan once we have any read primitive. What is missing is exactly one thing:
+a **write primitive**, and that is what steps 2–4 are for.
