@@ -135,3 +135,45 @@ domains is allowed.
 Conclusion: the factory debug surface is real and does contain root execution paths, but every
 one of them requires SELinux permission that the three domains reachable from a sideloaded app
 do not have. Remaining route is the GPU/Mali one (docs/07).
+
+---
+
+## Attempted: patch /system/bin/sh in the page cache (round 6) — partial success, then broke sh
+
+What worked, verified on the device:
+
+```
+[*] primitive ready (event gpu_va=0x102000000)
+[*] patching /system/bin/sh page cache (2 regions)
+  /system/bin/sh @0x18 : alias_ok=1 file_ok=1        <-- e_entry write SUCCEEDED
+```
+
+So the page-cache write primitive **does work on `/system/bin/sh`**, not just on `libc.so` — the
+e_entry word was written and verified read-back (`file_ok=1`). That is the important new fact:
+`sh` is patchable.
+
+What went wrong (two mistakes, both mine):
+
+1. **Wrong order.** I patched `e_entry` (0x2680 -> 0x2c900) *before* writing the stub into the
+   cave. The program then hung on the second `pc_patch` call, so the cave still contained zeros
+   while the entry already pointed at it: every new `sh` jumped into zeroed memory and crashed
+   (`Segmentation fault`). Correct order is **stub first (it is dead data, always safe), verify
+   it, and only then move e_entry.**
+2. **Cave choice was outside the loadable image.** The cave at file offset 0x2c900 is past the RX
+   segment's `filesz` (0x2c8c8); the primitive's mremap trick hangs on that page. The injection
+   site must be **inside** a loadable segment, so the next attempt needs an unused/padding region
+   within `[0, 0x2c8c8)`, or a different file.
+
+Recovery: `adb reboot` — it works without `sh` (adbd handles it), the page cache is dropped, and
+`sh` is byte-identical to stock again (verified: `e_entry = 0x2680`, `sh -c 'echo SH_OK'` works).
+
+### Lessons for the next attempt
+
+* Order: write the stub, read it back, only then patch `e_entry`; patch `e_entry` last and
+  self-test immediately after.
+* Injection site must be inside a PT_LOAD segment whose pages the primitive can already touch
+  (`pc_patch` demonstrably handles `libc.so` and works for the `sh` file offset 0x18).
+* `pc_patch()` returns 0 on success — my first generated main had the test inverted (`!pc_patch`),
+  which silently turned failures into "success".
+* Recovery without `sh`: `adb reboot` is the only reachable lever, because adb shell, am, pm-based
+  launch paths and the root console all go through `/system/bin/sh`.
