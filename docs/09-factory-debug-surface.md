@@ -177,3 +177,45 @@ Recovery: `adb reboot` — it works without `sh` (adbd handles it), the page cac
   which silently turned failures into "success".
 * Recovery without `sh`: `adb reboot` is the only reachable lever, because adb shell, am, pm-based
   launch paths and the root console all go through `/system/bin/sh`.
+
+---
+
+## Round 8: the sh patch works end to end (device-verified)
+
+Both stages succeeded on the device:
+
+```
+STAGE 1  /system/bin/sh @0x2c900 : alias_ok=1 file_ok=1
+         cave bytes -> ff 4f 2d e9 c9 70 a0 e3   (= push {r0-r11,lr} ; mov r7,#201)
+         e_entry still 0x2680, sh still works
+STAGE 2  /system/bin/sh @0x18 : alias_ok=1 file_ok=1
+         [+] entry patched; self-test
+         [+] SELF-TEST OK - patched sh runs normally
+         e_entry = 0x2c900, sh -c 'echo SH_OK' -> SH_OK
+```
+
+So: **the page-cache write primitive patches `/system/bin/sh` successfully, the injected
+stub executes and returns to the original entry, and `sh` keeps working.** The two
+blockers from round 6 (two-`pc_patch`-per-process hang, wrong ordering) are solved.
+
+Trigger: `adb bugreport` ran to completion and produced a bugreport file, i.e. `dumpstatez`
+ran as **root** and ran `/system/bin/sh` for its batteries. Immediately afterwards the TV
+**rebooted** (uptime reset; page cache dropped, so `sh` is stock again: e_entry 0x2680).
+
+Interpretation, stated as such and not as proof: the stub's root branch writes `0` to
+`/sys/fs/selinux/enforce`; the most likely explanation for the reboot is that this
+succeeded and something in Sony's middleware reacted to SELinux going permissive. The
+`/data/local/tmp/rooted` marker was **not** created, which is also consistent with the
+stub running (that path is shell_data_file, which a `dumpstate`-domain process would be
+denied) - so the marker was a poor choice of evidence.
+
+### Next step
+
+Re-run with a **marker-only** stub (no `enforce` write) writing somewhere a root
+`dumpstate` process can definitely write, to distinguish:
+  * marker appears, no reboot  -> the stub runs as root; only the enforce write causes the
+    reboot, so the root action needs to be something persistent rather than `setenforce 0`,
+  * marker appears, reboot anyway -> dumpstate is crashing on the stub and the jump-back needs
+    re-checking for that process,
+  * no marker, no reboot -> the stub is not reached from dumpstate's sh path and the trigger
+    needs to change.
