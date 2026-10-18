@@ -281,3 +281,34 @@ instead forks an `app_process` probe as root in the zygote domain) plus the Java
 dumps `CapEff` and greps `kallsyms` for `selinux_enforcing` is **prepared and compile-checked**
 in [`../exploit/zygote-root-probe/`](../exploit/zygote-root-probe/). It has not been applied to
 the device yet, because installing it briefly reconfigures the live root console.
+
+---
+
+## 10. Kernel-module route: CLOSED (measured)
+
+Attempting to load a kernel module from the zygote child (which we can do as root in
+`u:r:zygote:s0`) ran into three separate walls, in order:
+
+1. **Wrong syscall number (my bug).** `init_module` is syscall **128** on 32-bit ARM, not 105.
+   Syscall 105 is `getitimer`, which returns `EINVAL` for a bogus argument — which is why every
+   attempt (including a *pristine* shipping module) reported `EINVAL`. This cost several cycles
+   and is worth writing down: **ARM numbers differ from x86.**
+
+2. **ELISA surgery was not the problem.** A pristine `mtk_mmap.ko` taken straight from
+   `/vendor/lib/modules` returns the same result, so the module image was never the issue.
+
+3. **`init_module` returns `EPERM` even though the capability is present.** The payload reports
+   the result of `capget()` alongside the errno: `RESULT=E1` means "`-EPERM` **and**
+   `CAP_SYS_MODULE` is set in the effective set". Since `capable(CAP_SYS_MODULE)` therefore
+   succeeds, the `EPERM` must come from the second half of `may_init_module()`:
+   **`modules_disabled` is 1**. That variable is one-way: once set, the kernel refuses module
+   loading permanently, including for a privileged caller.
+
+So the module route is dead on this device. The zygote domain's `CAP_SYS_MODULE` was real, but
+Sony/MTK disabled module loading in the shipped kernel.
+
+### What this leaves
+
+The remaining kernel route is the one in §2–§6: CVE-2022-20186 → PTE control → GPU as the
+memory engine (we already have `WRITE_VALUE(ZERO)` confirmed working through the GPU MMU).
+Neither requires loading code into the kernel.
