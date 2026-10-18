@@ -168,3 +168,54 @@ dereference a bad pointer (fatal) — and the exploit should be shaped according
 address is derivable from a text-relative offset (kernel image, or a known build) or from a
 short pattern scan once we have any read primitive. What is missing is exactly one thing:
 a **write primitive**, and that is what steps 2–4 are for.
+
+---
+
+## 8. FIRST CONTROLLED FIRE — result (verified, no panic)
+
+Single `MEM_ALIAS` call from a dedicated process/context, parameters chosen so the whole
+touchable VA band belongs to that process:
+
+```
+[+] source: 256 pages at gpu_va=0x0102000000 pfn=0x102000
+[*] MEM_ALIAS nents=2 stride=0x8000000000000001 length=256 ... OK
+[+] alias gpu_va=0x0102100000 va_pages=2 (wrapped; real span is huge)
+[+] PTE runs inserted at pfn 0x102100 and 0x102101, 256 pages each
+[+] next allocation after the alias: gpu_va=0x0102102000 pfn=0x102102
+```
+
+What this establishes:
+
+1. **The overflow path executes cleanly.** `nents=2`, `stride=0x8000000000000001`
+   (product wraps to 2) and `length=256` were accepted; the kernel reports `va_pages = 2`
+   while the alias describes a span of ~2^63 pages.
+2. **Two 256-page PTE runs were installed** starting at pfn `0x102100` and `0x102101`,
+   i.e. **254 pages beyond** the 2-page region the tracker owns.
+3. **The desync is real and observable from userspace:** the very next allocation was handed
+   pfn **`0x102102`** — squarely inside the stray run. The region tracker believes that VA is
+   free while the MMU already has PTEs there mapping our source allocation.
+4. **No MALI fault, no oops, no reboot.** Kernel log stayed clean; TV uptime kept climbing.
+
+`panic_on_oops=1` was respected: this path never makes the kernel dereference anything we
+control — it only *writes PTEs*, which is why it is survivable.
+
+### Why the desync matters
+
+A region whose VA the MMU and the tracker disagree about is the standard gateway to
+kernel-level reach. The concrete next step is now well-defined:
+
+1. Allocate a **native, CPU-mappable** region `R` (so `mmap()` on the mali fd gives us a
+   userspace window onto whatever `R`'s PTEs point at).
+2. Use primitive **C** — the *separate* `ai[i].offset + ai[i].length` u64 add-overflow in
+   `mem_linux.c:1298` — so the PTE source array (`alloc->pages + offset`) is read from an
+   attacker-groomed heap window instead of our own array. Those 32-bit tagged page addresses
+   become the PTE values.
+3. Groom the kernel heap (SLUB; `slabinfo` is readable) so the OOB window contains the page
+   frame numbers we want.
+4. Redirect `R`'s PTEs at a chosen physical page → **CPU read/write of kernel memory**
+   through `R`'s userspace mapping.
+5. With arbitrary physical read/write: locate `selinux_enforcing` (the §4 text leak gives the
+   base; the symbol is at a fixed offset for this build) and clear it.
+
+Step 2 is the dangerous one: an OOB read of an unmapped heap address is an oops, and
+`panic_on_oops=1` turns that into a reboot. It needs its own carefully bounded probe.
