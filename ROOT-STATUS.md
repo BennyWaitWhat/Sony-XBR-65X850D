@@ -80,3 +80,26 @@ approved session.
   partition tool, not a shell).
 * CVE-2021-28663, CVE-2021-28664, CVE-2021-44828 all ruled out on r20p0 by local-source and
   shipped-binary evidence.
+
+---
+
+## Persistence wiring (added, boot-time)
+
+The console app's JNI patcher (`apkbuild/jni/pwn.c` -> now also carries the dumpstate hook) was
+extended so the boot JobScheduler job re-applies **all three** page-cache patches:
+`libc.so:0x25a90` (console payload), `libdumpstateutil.so:0x6200` (root stub),
+`libdumpstateutil.so:0x6d10` (init_array pointer).
+
+Important detail found while wiring it: the Mali primitive supports **one `pc_patch` per
+process** (a second call in the same process hangs), so each patch is applied from a `fork()`ed
+child. `apply_one()` does fork -> mali_setup -> one pc_patch -> _exit, parent waits.
+
+Also observed: the app crashes with an ActivityManager error when it is already running as uid 0
+("Package com.pwn.probe does not belong to <uid>"), so the patch path only runs at boot while the
+page cache is clean and the app still has its normal uid - which is exactly the intended flow
+(patch -> restart -> console as uid 0).
+
+Page-cache patches are also **evictable under memory pressure**: during this session the
+`libdumpstateutil.so` patches reverted on their own between runs, which is why the root payload
+must be re-applied before a trigger if a lot has happened since. The manual helpers
+(`/data/local/tmp/pB`, pP/pUid, pDSA/pDSB/pDST) remain the reliable way to re-apply on demand.
