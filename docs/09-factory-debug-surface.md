@@ -85,3 +85,53 @@ so the app being started never runs.
 The zygote payload hooks `setresuid`. It is installed by the page-cache primitive; the clean
 console-only payload is restored after each experiment. `setresuid` is patched at libc
 `0x4a990` -> payload at libc `0x25a90`.
+
+---
+
+## Measured: every reachable domain is denied (zygote test, safe methodology)
+
+The zygote domain was tested **without touching the TV's own apps**: the payload was keyed to
+uid 10014 only (our console app), forking so the app still gets uid 0, while every other uid
+(including 1000 / system apps) falls through to the real `setresuid`. This was the mistake in
+the earlier run, which hijacked system-app launches and froze the UI.
+
+Payload result from `u:r:zygote:s0`, uid 0:
+
+```
+ctx=u:r:zygote:s0 uid=0
+  write /3rd_rw/tombstone/.zw            -> -13  EACCES
+  open  /dev/cli                         -> -13  EACCES
+  write /data/local/tmp/zw               -> -13  EACCES
+  open  /3rd_rw/tombstone/bugreport/shell-> -13  EACCES
+  SystemProperties.set(sys.svp.bugreport.output) -> InvocationTargetException (denied)
+  SystemProperties.get(...)              -> empty
+```
+
+So the complete privesc chain is **closed at the second step**:
+
+1. write a script into `/3rd_rw/tombstone/bugreport/shell/`  — **denied in every domain we can
+   reach** (shell, untrusted_app, zygote)
+2. `setprop sys.svp.bugreport.output=...` -> `dumpstatedt3` runs `dumpstate -t 1` as **root**
+   and executes that script — **property write denied in every domain we can reach**
+3. root script could then write `/sys/fs/selinux/enforce` -> permissive -> real root
+
+Same story for `/dev/cli` (the `ttyman` root console) and for `sys.svp.b2bcmd.state`
+(b2bcmd EEPROM/file write): both need a property write or a device open that none of our three
+domains is allowed.
+
+### Access matrix (measured, not inferred)
+
+| target | shell `u:r:shell` | uid-0 app `u:r:untrusted_app` | `u:r:zygote` |
+|---|---|---|---|
+| `setprop sys.svp.*` | denied | denied (`avc: property_socket`) | denied |
+| `/dev/cli` open | denied | denied | **EACCES** |
+| write `/3rd_rw/tombstone` | denied | denied | **EACCES** |
+| write `/data/local/tmp` | allowed | denied | **EACCES** |
+| `mknod` | EPERM | — | — |
+| `init_module` | EPERM | — | EPERM (`avc: capability sys_module`) |
+| `/dev/kmem2` | denied | denied | **opens**, but read fails / mmap faults |
+| `/proc/self/pagemap` | no data | EPERM | — |
+
+Conclusion: the factory debug surface is real and does contain root execution paths, but every
+one of them requires SELinux permission that the three domains reachable from a sideloaded app
+do not have. Remaining route is the GPU/Mali one (docs/07).
