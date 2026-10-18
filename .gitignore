@@ -1,0 +1,10 @@
+out/
+pwn.apk
+*.keystore
+*.jks
+*.apk
+*.so
+*.o
+*.bin
+*.dex
+.vs/

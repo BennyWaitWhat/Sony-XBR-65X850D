@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.pwn.probe" android:versionCode="3" android:versionName="3.0">
+  <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="26"/>
+  <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
+  <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
+  <uses-permission android:name="android.permission.INTERNET"/>
+  <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+  <application android:label="Probe" android:debuggable="true">
+    <activity android:name=".Main" android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN"/>
+        <category android:name="android.intent.category.LAUNCHER"/>
+      </intent-filter>
+    </activity>
+    <receiver android:name=".BootReceiver" android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.BOOT_COMPLETED"/>
+        <action android:name="com.pwn.probe.RESTART"/>
+      </intent-filter>
+    </receiver>
+    <service android:name=".ConsoleService" android:exported="false"/>
+    <service android:name=".BootJobService" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="true"/>
+  </application>
+</manifest>
+
