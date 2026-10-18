@@ -116,9 +116,11 @@ whole point: the bootloader is locked, but the kernel driver was frozen in 2020.
 │   ├── 04-persistence.md             JNI + JobScheduler boot chain
 │   ├── 05-zygote-domain.md           bonus: uid 0 code execution in u:r:zygote:s0
 │   ├── 06-limitations-and-roadmap.md the SELinux wall and the kernel path
+│   ├── 07-kernel-primitive-analysis.md  CVE-2022-20186 code-level analysis + test plan
 │   └── ENGINEERING-LOG.md            raw, chronological lab notebook
 ├── exploit/
 │   ├── page-cache-write/pcwrite.c    standalone working primitive (CLI)
+│   ├── cve-2022-20186/alias_dryrun.c arithmetic harness (safe: never fires by default)
 │   └── payloads/                     ARM payloads (.s) used in the chain
 ├── apk/
 │   ├── jni/pwn.c                     the patcher as a JNI library
@@ -234,7 +236,9 @@ The only thing between "framework root" and *full* root is SELinux. The remainin
 the kernel route: **[CVE-2022-20186](https://nvd.nist.gov/vuln/detail/CVE-2022-20186)**
 (`kbase_mem_alias` `nents × stride` u64 overflow, already confirmed on this device) →
 page-table overlap → arbitrary physical mapping → kernel R/W → `selinux_enforcing = 0`.
-Details in [docs/06](docs/06-limitations-and-roadmap.md).
+Details in [docs/06](docs/06-limitations-and-roadmap.md); code-level analysis, the measured
+environment (including the fact that our uid 0 has an *empty capability bounding set*) and
+the staged test plan are in [docs/07](docs/07-kernel-primitive-analysis.md).
 
 ## Credits
 
