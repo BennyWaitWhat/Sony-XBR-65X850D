@@ -1,0 +1,193 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 640" width="1600" height="640">
+  <defs>
+    <linearGradient id="bg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#05070a" />
+      <stop offset="50%" stop-color="#0d1117" />
+      <stop offset="100%" stop-color="#090d13" />
+    </linearGradient>
+
+    <linearGradient id="card-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#161b22" stop-opacity="0.95" />
+      <stop offset="100%" stop-color="#0d1117" stop-opacity="0.98" />
+    </linearGradient>
+
+    <linearGradient id="accent-cyan" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#388bfd" />
+      <stop offset="100%" stop-color="#58a6ff" />
+    </linearGradient>
+
+    <linearGradient id="accent-green" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#238636" />
+      <stop offset="100%" stop-color="#3fb950" />
+    </linearGradient>
+
+    <linearGradient id="accent-red" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#da3633" />
+      <stop offset="100%" stop-color="#f85149" />
+    </linearGradient>
+
+    <linearGradient id="tv-glow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1f6feb" stop-opacity="0.25" />
+      <stop offset="100%" stop-color="#8957e5" stop-opacity="0.05" />
+    </linearGradient>
+
+    <pattern id="grid-pattern" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#30363d" stroke-width="0.5" stroke-opacity="0.35" />
+    </pattern>
+
+    <pattern id="dot-pattern" width="20" height="20" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1" fill="#58a6ff" fill-opacity="0.12" />
+    </pattern>
+
+    <style>
+      .hero-title { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'SF Pro Display', Roboto, Helvetica, Arial, sans-serif; font-size: 48px; font-weight: 800; fill: #ffffff; letter-spacing: -1px; }
+      .hero-subtitle { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 20px; font-weight: 400; fill: #8b949e; letter-spacing: 0px; }
+      .tagline { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 13px; font-weight: 600; fill: #58a6ff; letter-spacing: 2px; text-transform: uppercase; }
+      .chip-text { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 11px; font-weight: 600; fill: #c9d1d9; }
+      .mono-code { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 12px; fill: #79c0ff; }
+      .terminal-title { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 12px; fill: #8b949e; }
+      .stat-val { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 22px; font-weight: 700; fill: #f0f6fc; }
+      .stat-lbl { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 11px; fill: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; }
+    </style>
+  </defs>
+
+  <!-- Background Base -->
+  <rect x="0" y="0" width="1600" height="640" fill="url(#bg-grad)" />
+
+  <!-- Technical Grid Overlay -->
+  <rect x="0" y="0" width="1600" height="640" fill="url(#grid-pattern)" />
+  <rect x="800" y="0" width="800" height="640" fill="url(#dot-pattern)" />
+
+  <!-- Ambient Light Orbs -->
+  <circle cx="200" cy="120" r="300" fill="#1f6feb" fill-opacity="0.08" filter="blur(60px)" />
+  <circle cx="1300" cy="400" r="350" fill="#8957e5" fill-opacity="0.07" filter="blur(70px)" />
+  <circle cx="950" cy="200" r="220" fill="#238636" fill-opacity="0.06" filter="blur(50px)" />
+
+  <!-- Decorative Outer Border -->
+  <rect x="24" y="24" width="1552" height="592" rx="16" fill="none" stroke="#30363d" stroke-width="1.2" />
+
+  <!-- LEFT HERO PANEL: Branding & Core Narrative -->
+  <g transform="translate(80, 80)">
+    
+    <!-- Tagline Badge -->
+    <g transform="translate(0, 0)">
+      <rect x="0" y="0" width="310" height="28" rx="14" fill="#1f2937" stroke="#374151" stroke-width="1" />
+      <circle cx="16" cy="14" r="5" fill="#3fb950" />
+      <text class="tagline" x="32" y="19">KERNEL EXPLOITATION &amp; PERSISTENCE</text>
+    </g>
+
+    <!-- Main Title -->
+    <text class="hero-title" x="0" y="80">Sony BRAVIA XBR-65X850D</text>
+    <text class="hero-subtitle" x="0" y="118">Subverting Hardware-Enforced Trust via Mali GPU Page-Cache Corruption</text>
+
+    <!-- Context & Architecture Summary -->
+    <g transform="translate(0, 155)">
+      <text font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="14.5" fill="#c9d1d9" x="0" y="0">
+        <tspan x="0" dy="0">A production-grade privilege escalation research project subverting locked bootloaders, dm-verity,</tspan>
+        <tspan x="0" dy="24">and SELinux enforcing policy on MediaTek MT5890 (SVP-DTV15) running Android 8.0 Oreo.</tspan>
+        <tspan x="0" dy="24">Weaponizes CVE-2022-22706 via a targeted setresuid hook into a reboot-surviving root console on port 4445.</tspan>
+      </text>
+    </g>
+
+    <!-- Spec Metric Cards -->
+    <g transform="translate(0, 245)">
+      <!-- Metric 1: SoC & Platform -->
+      <g transform="translate(0, 0)">
+        <rect x="0" y="0" width="145" height="74" rx="8" fill="#161b22" stroke="#30363d" />
+        <text class="stat-lbl" x="16" y="26">TARGET SOC</text>
+        <text class="stat-val" x="16" y="52">MT5890</text>
+      </g>
+
+      <!-- Metric 2: Kernel -->
+      <g transform="translate(157, 0)">
+        <rect x="0" y="0" width="145" height="74" rx="8" fill="#161b22" stroke="#30363d" />
+        <text class="stat-lbl" x="16" y="26">KERNEL</text>
+        <text class="stat-val" x="16" y="52">3.10.79</text>
+      </g>
+
+      <!-- Metric 3: Primitive -->
+      <g transform="translate(314, 0)">
+        <rect x="0" y="0" width="200" height="74" rx="8" fill="#161b22" stroke="#f85149" stroke-width="1.2" />
+        <text class="stat-lbl" x="16" y="26" fill="#ff7b72">PRIMITIVE</text>
+        <text class="stat-val" x="16" y="52" fill="#ff7b72" font-size="20px">CVE-2022-22706</text>
+      </g>
+
+      <!-- Metric 4: Persistence -->
+      <g transform="translate(526, 0)">
+        <rect x="0" y="0" width="165" height="74" rx="8" fill="#161b22" stroke="#3fb950" stroke-width="1.2" />
+        <text class="stat-lbl" x="16" y="26" fill="#3fb950">PERSISTENCE</text>
+        <text class="stat-val" x="16" y="52" fill="#3fb950">Port 4445</text>
+      </g>
+    </g>
+
+    <!-- Bottom Feature Badges -->
+    <g transform="translate(0, 350)">
+      <rect x="0" y="0" width="120" height="26" rx="6" fill="#21262d" stroke="#30363d" />
+      <text class="chip-text" x="60" y="17" text-anchor="middle">ARM Cortex-A17</text>
+
+      <rect x="130" y="0" width="125" height="26" rx="6" fill="#21262d" stroke="#30363d" />
+      <text class="chip-text" x="192" y="17" text-anchor="middle">Mali Midgard T62x</text>
+
+      <rect x="265" y="0" width="125" height="26" rx="6" fill="#21262d" stroke="#30363d" />
+      <text class="chip-text" x="327" y="17" text-anchor="middle">JobScheduler Pwn</text>
+
+      <rect x="400" y="0" width="135" height="26" rx="6" fill="#21262d" stroke="#30363d" />
+      <text class="chip-text" x="467" y="17" text-anchor="middle">Targeted setresuid</text>
+
+      <rect x="545" y="0" width="140" height="26" rx="6" fill="#1b2e20" stroke="#238636" />
+      <text class="chip-text" x="615" y="17" fill="#3fb950" text-anchor="middle">Survives Cold Boot</text>
+    </g>
+  </g>
+
+  <!-- RIGHT PANEL: Avant-Garde Exploit & Memory Geometry Visual -->
+  <g transform="translate(860, 68)">
+    
+    <!-- Stylized Monolithic Bravia Display Frame -->
+    <rect x="0" y="0" width="650" height="504" rx="14" fill="url(#card-grad)" stroke="#30363d" stroke-width="1.5" />
+    
+    <!-- Titlebar of display -->
+    <rect x="0" y="0" width="650" height="42" rx="14" fill="#161b22" />
+    <path d="M 0 42 L 650 42" stroke="#30363d" stroke-width="1" />
+    <circle cx="24" cy="21" r="5" fill="#ff5f56" />
+    <circle cx="40" cy="21" r="5" fill="#ffbd2e" />
+    <circle cx="56" cy="21" r="5" fill="#27c93f" />
+    <text class="terminal-title" x="325" y="26" text-anchor="middle">LIVE EXPLOIT TELEMETRY — SONY SVP-DTV15</text>
+
+    <!-- Inner Content Cards -->
+    
+    <!-- Card 1: Primitive Flow -->
+    <g transform="translate(24, 60)">
+      <rect x="0" y="0" width="602" height="110" rx="8" fill="#0d1117" stroke="#30363d" />
+      <text font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="700" fill="#58a6ff" x="18" y="24">CVE-2022-22706: ARBITRARY PAGE-CACHE WRITE</text>
+      
+      <text class="mono-code" x="18" y="48">ioctl(mali_fd, KBASE_IOCTL_MEM_IMPORT, &amp;imp)  // CPU_WR=1, GPU_WR=0</text>
+      <text class="mono-code" x="18" y="68">mremap(libc_map, PAGE, PAGE, MREMAP_FIXED, anon)</text>
+      <text class="mono-code" x="18" y="88" fill="#3fb950">memcpy(alias + 0x4a990, branch_payload, 4)   // writes RAM page cache</text>
+    </g>
+
+    <!-- Card 2: Hook Assembly Injection -->
+    <g transform="translate(24, 185)">
+      <rect x="0" y="0" width="602" height="120" rx="8" fill="#0d1117" stroke="#d29922" stroke-width="1.2" />
+      <text font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="700" fill="#d29922" x="18" y="24">TARGETED SETRESUID HOOK (/system/lib/libc.so)</text>
+      
+      <text class="mono-code" x="18" y="48" fill="#c9d1d9">0x4a990:  3E 6C FF EA          b 0x25a90 (__ns_sprintrrf payload)</text>
+      <text class="mono-code" x="18" y="68" fill="#c9d1d9">0x25a90:  cmp r0, #10014       // Check probe app UID</text>
+      <text class="mono-code" x="18" y="88" fill="#3fb950">          moveq r0, #0 ; bx lr // Retain root privileges</text>
+      <text class="mono-code" x="18" y="108" fill="#8b949e">          movne r7, #208 ; svc #0 // Normal apps drop clean</text>
+    </g>
+
+    <!-- Card 3: Root Terminal Live Session -->
+    <g transform="translate(24, 320)">
+      <rect x="0" y="0" width="602" height="154" rx="8" fill="#0d1117" stroke="#3fb950" stroke-width="1.2" />
+      <text font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="700" fill="#3fb950" x="18" y="24">SURVIVING COLD BOOT: INTERACTIVE ROOT CONSOLE (:4445)</text>
+
+      <text class="mono-code" x="18" y="48" fill="#8b949e">&gt; Connect: 192.168.1.50:4445 [Tailscale: 100.x.y.z:4445]</text>
+      <text class="mono-code" x="18" y="68" fill="#58a6ff">OK uid=0 pid=5024 context=u:r:untrusted_app:s0</text>
+      <text class="mono-code" x="18" y="88" fill="#f0883e">root@tv # id</text>
+      <text class="mono-code" x="18" y="108" fill="#c9d1d9">uid=0(root) gid=10014(u0_a14) groups=3003(inet),9997(everybody)</text>
+      <text class="mono-code" x="18" y="128" fill="#3fb950">PERSISTENT_ROOT_OK — Reboot survival verified 100%</text>
+    </g>
+
+  </g>
+
+</svg>

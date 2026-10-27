@@ -8,3 +8,11 @@ pwn.apk
 *.bin
 *.dex
 .vs/
+
+# AI Tooling & Metadata
+.claude/
+.grill/
+.cursor/
+.gemini/
+.agents/
+CLAUDE.md
